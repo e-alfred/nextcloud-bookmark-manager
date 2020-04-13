@@ -15,15 +15,19 @@ exports.createAbout = () => {
 	
 		about = new BrowserWindow({
 			show: false,
-			titleBarStyle: 'hidden',
 			width: 340,
-			height: 360,
+			height: 370,
 			resizable: false,
 			minimizable: false,
 			maximizable: false,
 			alwaysOnTop: true,
-			backgroundColor: '#1C283B',
-			webPreferences: { devTools: false }
+			title: '',
+			vibrancy: 'under-window',
+			webPreferences: {
+				devTools: true,
+				preload: path.join(__dirname, './preload.min.js'),
+				nodeIntegration: true,
+			}
 		})
 		
 		about.loadURL(url.format ({ 

@@ -8,8 +8,9 @@ const 	gulp 			= require('gulp'),
 		uglify 			= require('gulp-uglify-es').default,
 		pump 			= require('pump'),
 		iconutil 		= require('gulp-iconutil'),
-		sequence 		= require('run-sequence'),
-		exec 			= require('child_process').exec
+		exec 			= require('child_process').exec,
+		del				= require('del'),
+		replace			= require('gulp-string-replace')
 
 
 
@@ -21,8 +22,8 @@ const	sourceCss 		= 'app-source/scss/*.scss',
 		destHtml 		= 'dist/html',
 		sourceSvg 		= 'app-source/assets/svg/*.svg',
 		destSvg 		= 'dist/assets/svg',
-		sourceJson 		= 'app-source/json/*.json',
-		destJson 		= 'dist/json'
+		sourceLang 		= 'app-source/i18n/**/*.json',
+		destLang 		= 'dist/i18n'
 
 
 
@@ -50,19 +51,24 @@ gulp.task('html', () => {
 
 
 
-gulp.task('js', (cb) => {
+gulp.task('js', done => {
 	
 	pump([
 			gulp.src(sourceJs),
 			sourcemaps.init(),
-			uglify(),
+			//uglify().on('error', function(uglify) {
+			//	console.error(`ERROR: ${uglify.name}, in: ${uglify.filename}`)
+			//	console.error(`line: ${uglify.line}, col: ${uglify.col}`)
+			//	console.error(uglify.message)
+			//	this.emit('end')
+			//}),
 			rename({suffix: '.min'}),
 			sourcemaps.write('./maps'),
 			gulp.dest(destJs)
-		],
-		
-		cb()
+		]
 	)
+	
+	done()
 })
 
 
@@ -77,7 +83,7 @@ gulp.task('svg', () => {
 
 gulp.task('icns', () => {
 
-	return gulp.src('./app-source/assets/Icon.iconset/icon_*.png')
+	return gulp.src('./app-source/assets/AppIcon.appiconset/icon_*.png')
 		.pipe(iconutil('icon.icns'))
 		.pipe(gulp.dest('./dist/assets/icon/'))
 })
@@ -86,36 +92,103 @@ gulp.task('icns', () => {
 
 gulp.task('icon', () => {	
 	
-	return gulp.src('./app-source/assets/Icon.iconset/icon_128x128@2x.png')
+	return gulp.src('./app-source/assets/AppIcon.appiconset/icon_128x128@2x.png')
 		.pipe(rename('icon.png'))
 		.pipe(gulp.dest('./dist/assets/icon/'))
 })
 
 
 
-gulp.task('json', () => {
+gulp.task('i18n', () => {
 	
-	return gulp.src(sourceJson)
-		.pipe(gulp.dest(destJson))
+	return gulp.src(sourceLang)
+		.pipe(gulp.dest(destLang))
 })
 
 
 
-gulp.task('build', () => {
+gulp.task('clean', done => {
 	
-	sequence(
-		'sass',
-		['html', 'js', 'svg', 'json'],
-		'icns',
-		'icon'
-	)
+	del.sync(['dist/**', '!dist'])
+	
+	done()
 })
 
 
 
-gulp.task('watch', ['html', 'js', 'sass'], () => {
+gulp.task('nodevtools', done => {
 	
-	gulp.watch('app-source/html/**/*.html', ['html'])
-	gulp.watch('app-source/js/**/*.js', ['js'])
-	gulp.watch('app-source/scss/**/*.scss', ['sass'])
+	gulp.src(['./app-source/js/main.js','./app-source/js/menu-app.js'], {base: './'})
+		.pipe(replace('//@exclude', '/*'))
+		.pipe(replace('//@end', '*/'))
+		.pipe(gulp.dest('./'))
+	
+	done()
 })
+
+
+
+gulp.task('devtools', done => {
+	
+	gulp.src(['./app-source/js/main.js','./app-source/js/menu-app.js'], {base: './'})
+		.pipe(replace(new RegExp('\\/\\*', 'g'), '//@exclude'))
+		.pipe(replace(new RegExp('\\*\\/', 'g'), '//@end'))
+		.pipe(gulp.dest('./'))
+	
+	done()
+})
+
+
+
+gulp.task('nowebprefs', done => {
+	
+	gulp.src( sourceJs, {base: './'})
+		.pipe(replace('devTools: true,', 'devTools: false,'))
+		.pipe(gulp.dest('./'))
+	
+	done()
+})
+
+
+
+gulp.task('webprefs', done => {
+	
+	gulp.src( sourceJs, {base: './'})
+		.pipe(replace('devTools: false,', 'devTools: true,'))
+		.pipe(gulp.dest('./'))
+	
+	done()
+})
+
+
+gulp.task('build', gulp.series(	
+	
+	'nodevtools',
+	'nowebprefs',
+	'clean',
+	'sass',
+	'html',
+	'js',
+	'svg',
+	'i18n',
+	'icns',
+	'icon',
+	'devtools',
+	'webprefs'
+	
+), done => {
+	
+	done()
+})
+
+
+
+gulp.task('watch', gulp.series(gulp.parallel('html', 'js', 'sass', 'i18n'), () => {
+	
+	gulp.watch('app-source/html/**/*.html', gulp.series('html')),
+	gulp.watch('app-source/js/**/*.js', gulp.series('js')),
+	gulp.watch('app-source/scss/**/*.scss', gulp.series('sass')),
+	gulp.watch('app-source/i18n/**/*.json', gulp.series('i18n'))
+	
+	return
+}))

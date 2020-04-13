@@ -1,17 +1,19 @@
 'use strict'
 
-const {app, BrowserWindow, ipcMain, protocol} = require('electron')
-const url = require('url') 
-const path = require('path')
-const dialog = require('electron').dialog
-const Store = require('electron-store')
+const {app, BrowserWindow, ipcMain, protocol, Menu} = require('electron')
+const url 		= require('url') 
+const path 		= require('path')
+const dialog 	= require('electron').dialog
+const Store 	= require('electron-store')
+const log		= require( 'electron-log' )
 
 const getAvailableBrowsers = require('detect-installed-browsers').getAvailableBrowsers
 
+
+
 let win,
 	loginFlow,
-	exportProcess
-
+	isQuitting = false
 
 
 let store = new Store({
@@ -27,10 +29,9 @@ let store = new Store({
 		
 		tableColumns: {
 			
-			description: true,
-			url: true,
-			created: false,
-			modified: false
+			created: true,
+			modified: true,
+			tags: true
 		},
 		
 		loginCredentials: {
@@ -41,9 +42,7 @@ let store = new Store({
 		},
 		
 		exportPath: app.getPath('desktop'),
-		
 		tags: null,
-		
 		browsers: null
 	}
 })
@@ -56,28 +55,30 @@ function createWindow() {
 	
 	win = new BrowserWindow({
 		show: false,
-		titleBarStyle: 'hidden',
 		x: x,
 		y: y,
 		width: width,
 		height: height,
-		minWidth: 460,
+		minWidth: 550,
 		minHeight: 396,
-		backgroundColor: '#fff',
+		vibrancy: 'under-window',
+		webPreferences: {
+			devTools: true,
+			preload: path.join(__dirname, './preload.min.js'),
+			nodeIntegration: true,
+		},
 		icon: path.join(__dirname, '../assets/icon/Icon.icns')
 	})
-	
-	win.setSheetOffset( 24 )
 	
 	function saveWindowBounds() {
 		
 		store.set('windowBounds', win.getBounds())
 	}
 	
-	win.loadURL(url.format ({ 
+	win.loadURL(url.format ({
 		
 		pathname: path.join(__dirname, '../html/app.html'), 
-		protocol: 'file:', 
+		protocol: 'file:',
 		slashes: true 
 	}))
 	
@@ -89,14 +90,40 @@ function createWindow() {
 	win.on('resize', saveWindowBounds)
 	win.on('move', saveWindowBounds)
 	
-	win.on('closed', () => {
+	app.on('before-quit', () => {
 		
-		app.quit()
+		isQuitting = true
 	})
 	
-	require( './app-menu.min' )
-	require( './context-menu.min' )
-	require( './tags-menu.min' )
+	win.on('close', function(e) {
+	
+		if( !isQuitting ) {
+			
+			e.preventDefault()
+			Menu.sendActionToFirstResponder('hide:')
+		}
+	})
+	
+	win.webContents.on('did-fail-load', () => {
+		
+		log.error( `main window did not load` )
+	})
+	
+	win.webContents.on( 'crashed', ( event, killed ) => {
+		
+		log.info( `main window has crashed:` )
+		log.error( event )
+	})
+	
+	win.on( 'unresponsive', () => {
+		
+		log.info( `main window is not responding…` )
+	})
+	
+	win.on( 'responsive', () => {
+		
+		log.info( `main window is responding` )
+	})
 	
 	getAvailableBrowsers( {}, ( browserList ) => {
 		
@@ -109,41 +136,82 @@ function createWindow() {
 		}
 	})
 	
-	protocol.registerFileProtocol('nc', (request, callback) => {
-		
-		const url = request.url.split( '&' )
-		
-		const 	user = url[1].replace('user:', ''),
-				pass = url[2].replace('password:', '')
-		
-		store.set( 'loginCredentials.username', user )
-		store.set( 'loginCredentials.password', pass )
-		
-		loginFlow.close()
-		
-		win.webContents.send('close-login-modal', 'close-login-modal')
-		win.reload()
-	
-	}, (error) => {
-	
-		if (error) console.error('Failed to register protocol')
-	})
+	require( './menu-app.min' )
+	require( './menu-bookmarks.min' )
+	require( './menu-columns.min' )
+	require( './menu-tags.min' )
 }
 
-app.on('ready', createWindow) 
 
+
+app.on('ready', function() {
+	
+	createWindow()
+	
+	protocol.registerFileProtocol('nc', (request, callack) => {
+		
+		const url = request.url
+		
+		if( url ) {
+			
+			const parts = url.split( '&' )
+			
+			const 	user = parts[1].replace('user:', ''),
+					pass = parts[2].replace('password:', '')
+			
+			store.set( 'loginCredentials.username', user )
+			store.set( 'loginCredentials.password', pass )
+			
+			loginFlow.close()
+			win.webContents.send('login-ok', 'login-ok')
+		}
+	
+	}, ( error ) => {
+		
+		if (error) {
+			
+			log.error('Failed to register protocol')
+			
+			dialog.showErrorBox(
+				`Error`,
+				`Failed to register protocol`
+			)
+		}
+	})
+}) 
+
+
+
+app.on('window-all-closed', function () {
+	
+	if (process.platform !== 'darwin') {
+		
+		app.quit()
+	}
+})
+
+
+
+app.on('activate', ( event, hasVisibleWindows ) => {
+	
+	if (!hasVisibleWindows) {
+		
+		createWindow()
+	}
+})
+
+
+
+app.on('quit-app', () => {
+	
+	isQuitting = true
+	app.quit()
+})
 
 
 ipcMain.on('refresh', (event, message) => {
 	
 	win.webContents.send('refresh-bookmarks', 'refresh')
-})
-
-
-
-ipcMain.on('reload', (event, message) => {
-	
-	win.reload()
 })
 
 
@@ -155,14 +223,16 @@ ipcMain.on('loginflow', (event, message) => {
 		width: 800,
 		height: 600,
 		resizable: false,
+		minimizable: false,
+		maximizable: false,
 		show: false,
 		titleBarStyle: 'hidden',
 		backgroundColor: '#0082c9',
 		webPreferences: {
+			devTools: true,
 			nodeIntegration: false
 		}
 	})
-	
 	
 	loginFlow.loadURL( message + '/index.php/login/flow' , {
 		
@@ -170,46 +240,37 @@ ipcMain.on('loginflow', (event, message) => {
 		extraHeaders: 'OCS-APIRequest: true'
 	})
 	
-	
 	loginFlow.once('ready-to-show', () => {
 		
 		loginFlow.show()
+	})
+	
+	loginFlow.webContents.on('did-fail-load', () => {
+		
+		log.error( `loginflow window did not load` )
+	})
+	
+	loginFlow.webContents.on( 'crashed', ( event, killed ) => {
+		
+		log.info( `loginflow window has crashed:` )
+		log.error( event )
+	})
+	
+	loginFlow.on( 'unresponsive', () => {
+		
+		log.info( `loginflow window is not responding…` )
+	})
+	
+	loginFlow.on( 'responsive', () => {
+		
+		log.info( `loginflow window is responding` )
 	})
 })
 
 
 
-app.on('export', (message) => {
+ipcMain.on('error-in-render', function(event, message) {
 	
-	const exportPath = store.get('exportPath')
-	
-	dialog.showOpenDialog(win, {
-			
-			defaultPath: exportPath + '/',
-			buttonLabel: 'Export Bookmarks',
-			properties: [	'openDirectory',
-							'createDirectory'
-						]
-		},		
-		
-		runExportProcess
-	)
-	
-	
-	function runExportProcess( exportPath ) {
-		
-		if( exportPath ) {
-			
-			store.set('exportPath', exportPath)
-			
-			const exportProcess = new BrowserWindow({ show: false })
-			
-			exportProcess.loadURL(url.format ({ 
-				
-				pathname: path.join(__dirname, '../html/export-bookmarks.html'), 
-				protocol: 'file:', 
-				slashes: true 
-			}))
-		}
-	}
+	log.error(`exception in render process:`)
+	log.info (message)
 })
